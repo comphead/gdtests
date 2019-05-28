@@ -1,0 +1,20 @@
+version: '2'
+networks:
+  app-tier:
+    driver: bridge
+
+
+services:
+  cassandra_server:
+    environment:
+      - CASSANDRA_HOST
+    image: 'bitnami/cassandra:latest'
+    ports:
+      - 7000:7000
+      - 9042:9042
+    volumes:
+      - 'cassandra_data:/bitnami'
+volumes:
+  cassandra_data:
+    driver: local
+

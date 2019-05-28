@@ -1,0 +1,52 @@
+group 'com.av'
+version '1.0-SNAPSHOT'
+
+apply plugin: 'java'
+apply plugin: 'scala'
+
+repositories {
+    mavenCentral()
+}
+
+
+
+dependencies {
+    compile 'org.scala-lang:scala-library:2.11.12'
+    
+    compile (group: 'org.apache.spark', name: 'spark-core_2.11', version: '2.4.3')
+    compile (group: 'org.apache.spark', name: 'spark-streaming-kafka-0-10_2.11', version: '2.4.3')
+    // https://mvnrepository.com/artifact/org.apache.spark/spark-streaming
+    compile group: 'org.apache.spark', name: 'spark-streaming_2.11', version: '2.4.3'
+    // https://mvnrepository.com/artifact/org.apache.spark/spark-sql
+    compile group: 'org.apache.spark', name: 'spark-sql_2.11', version: '2.4.3'
+// https://mvnrepository.com/artifact/com.datastax.spark/spark-cassandra-connector
+    compile group: 'com.datastax.spark', name: 'spark-cassandra-connector_2.11', version: '2.4.1'
+    // https://mvnrepository.com/artifact/org.json4s/json4s-jackson
+    compile group: 'org.json4s', name: 'json4s-jackson_2.11', version: '3.6.5'
+// https://mvnrepository.com/artifact/org.json4s/json4s-native
+    compile group: 'org.json4s', name: 'json4s-native_2.11', version: '3.6.5'
+    compile group: 'org.slf4j', name: 'slf4j-simple', version: '1.7.26'
+
+    // https://mvnrepository.com/artifact/org.scala-lang.modules/scala-xml
+    compile group: 'org.scala-lang.modules', name: 'scala-xml_2.11', version: '1.2.0'
+
+
+}
+
+configurations.all {
+    resolutionStrategy {
+        force 'com.fasterxml.jackson.core:jackson-core:2.6.7'
+        force 'com.fasterxml.jackson.core:jackson-databind:2.6.7.1'
+    }
+}
+
+task fatJar(type: Jar) {
+    manifest {
+        attributes 'Implementation-Title': 'Gradle Jar File Example',
+                'Implementation-Version': version,
+                'Main-Class': 'com.av.App'
+    }
+    baseName = project.name + '-all'
+    from { configurations.compile.collect { it.isDirectory() ? it : zipTree(it) } }
+    with jar
+}
