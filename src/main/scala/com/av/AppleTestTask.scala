@@ -3,10 +3,10 @@ package com.av
 import com.av.ConfigReader.{safeGetConf => cnf}
 import com.av.SourceBuilder._
 import com.typesafe.config.{Config, ConfigFactory}
-import org.apache.spark.sql.{SparkSession, _}
 import org.apache.spark.sql.expressions.{Aggregator, Window}
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.types.{StringType, StructField, StructType, TimestampType}
+import org.apache.spark.sql.{SparkSession, _}
 
 object AppleTestTask {
   def main(args: Array[String]): Unit = {
@@ -100,7 +100,7 @@ object AppleTest {
 
     type T3 = (Int, Long, Long)
 
-    class Aggr extends Aggregator[Row, (String, T3), T3] with Serializable {
+    class Aggr extends Aggregator[Row, (String, T3), String] with Serializable {
 
       private lazy val buffer = new scala.collection.mutable.HashMap[String, T3]()
 
@@ -123,7 +123,7 @@ object AppleTest {
       }
 
 
-      override def outputEncoder: Encoder[T3] = Encoders.tuple(Encoders.scalaInt, Encoders.scalaLong, Encoders.scalaLong)
+      override def outputEncoder: Encoder[String] = Encoders.STRING
 
       override def merge(b1: (String, T3), b2: (String, T3)): (String, T3) = {
         //val sessionEndTime = buffer(b2._1)
@@ -131,17 +131,26 @@ object AppleTest {
         b2
       }
 
-      override def finish(reduction: (String, T3)): T3 = reduction._2
+
+      override def finish(reduction: (String, T3)): String = {
+        val red = reduction._2
+        s"""
+           |{"sid": ${red._1}, "ss": ${red._2}, "se": ${red._3}}
+         """.stripMargin
+      }
 
       override def bufferEncoder: Encoder[(String, T3)] = Encoders.tuple(Encoders.STRING, Encoders.tuple(Encoders.scalaInt, Encoders.scalaLong, Encoders.scalaLong))
     }
 
     df
-
       .filter($"userId" === "user 300" && $"category" === "notebooks")
-      .groupBy($"userId", $"category", $"eventTime").agg(new Aggr().toColumn)
+      .groupBy($"userId", $"category", $"eventTime").agg(new Aggr().toColumn.as("aggr"))
       .orderBy($"eventTime")
-
+      .select(
+        $"userId", $"category", $"eventTime",
+        get_json_object($"aggr", "$.sid").as("sessionId"),
+        get_json_object($"aggr", "$.ss").as("sessionStart"),
+        get_json_object($"aggr", "$.se").as("sessionEnd"))
       .show(false)
 
     //    val task2a = task1a
