@@ -98,26 +98,26 @@ object AppleTest {
       * Task #1(spark aggr)
       */
 
-    type T3 = (Int, Long, Long)
+    type T3 = (Int, Long, Long, String)
 
     class Aggr extends Aggregator[Row, (String, T3), String] with Serializable {
 
       private lazy val buffer = new scala.collection.mutable.HashMap[String, T3]()
 
-      override def zero: (String, T3) = ("", (-1, -1L, -1L))
+      override def zero: (String, T3) = ("", (-1, -1L, -1L, ""))
 
       override def reduce(b: (String, T3), a: Row): (String, T3) = {
         val key = a.getString(a.fieldIndex("category")) + "#" + a.getString(a.fieldIndex("userId"))
         val ts = a.getTimestamp(a.fieldIndex("eventTime")).getTime
 
-        val t = buffer.getOrElseUpdate(key, (key.hashCode, ts, -1L))
-
-        buffer.put(key, t match {
-          case (_, tts, _) if ts - tts >= 300 * 1000 =>
+        val t = buffer.getOrElseUpdate(key, (key.hashCode, ts, ts, ""))
+        val updated = t match {
+          case (_, tts, _, _) if ts - tts >= 300 * 1000 =>
             t.copy(_1 = t._1 + 1, _2 = ts)
           case _ => t
-        })
+        }
 
+        buffer.put(key, updated.copy(_4 = updated._4 + "," + updated._1 + "#" + ts.toString))
 
         (key, buffer(key))
       }
@@ -126,11 +126,13 @@ object AppleTest {
       override def outputEncoder: Encoder[String] = Encoders.STRING
 
       override def merge(b1: (String, T3), b2: (String, T3)): (String, T3) = {
-        //val sessionEndTime = buffer(b2._1)
-        //b2.copy(_2 = b2._2.copy(_3 = sessionEndTime))
-        b2
-      }
+        val latest = b2._2._4
+          .split(",").filter(_.nonEmpty).map(x => x.split("#") match {
+          case Array(s1, s2) => (s1.toInt, s2.toLong)
+        }).filter(_._1 == b2._2._1).maxBy(_._2)._2
 
+        b2.copy(_2 = b2._2.copy(_3 = latest))
+      }
 
       override def finish(reduction: (String, T3)): String = {
         val red = reduction._2
@@ -139,7 +141,7 @@ object AppleTest {
          """.stripMargin
       }
 
-      override def bufferEncoder: Encoder[(String, T3)] = Encoders.tuple(Encoders.STRING, Encoders.tuple(Encoders.scalaInt, Encoders.scalaLong, Encoders.scalaLong))
+      override def bufferEncoder: Encoder[(String, T3)] = Encoders.tuple(Encoders.STRING, Encoders.tuple(Encoders.scalaInt, Encoders.scalaLong, Encoders.scalaLong, Encoders.STRING))
     }
 
     df
@@ -149,54 +151,54 @@ object AppleTest {
       .select(
         $"userId", $"category", $"eventTime",
         get_json_object($"aggr", "$.sid").as("sessionId"),
-        get_json_object($"aggr", "$.ss").as("sessionStart"),
-        get_json_object($"aggr", "$.se").as("sessionEnd"))
+        from_unixtime(get_json_object($"aggr", "$.ss") / 1000).as("sessionStart"),
+        from_unixtime(get_json_object($"aggr", "$.se") / 1000).as("sessionEnd"))
       .show(false)
 
-    //    val task2a = task1a
-    //      .withColumn("sessionDuration", unix_timestamp($"sessionEndTime") - unix_timestamp($"sessionStartTime"))
-    //
-    //    /**
-    //      * Task #2
-    //      * average session duration
-    //      */
-    //
-    //
-    //    task2a
-    //      .select($"category", $"userId", $"sessionDuration")
-    //      .distinct()
-    //      .groupBy($"category").agg(avg($"sessionDuration"))
-    //
-    //
-    //    /**
-    //      * Task #2
-    //      * users
-    //      */
-    //
-    //    task2a
-    //      .select($"category", $"userId", $"sessionDuration")
-    //      .distinct()
-    //      .groupBy($"category", $"userId").agg(sum($"sessionDuration").as("sessionDuration"))
-    //      .withColumn("durationCategory", when($"sessionDuration" < 60, "<1").when($"sessionDuration".between(60, 300), "1 to 5").otherwise(">5"))
-    //      .groupBy($"category").pivot($"durationCategory").agg(count($"userId"))
-    //
-    //    /**
-    //      * Task #2
-    //      * top10
-    //      */
-    //
-    //    df
-    //      .withColumn("prevProduct", lag($"product", 1).over(window))
-    //      .withColumn("initialSessionId", when($"prevProduct".isNull || $"prevProduct" =!= $"product", monotonically_increasing_id()))
-    //      .withColumn("sessionId", last($"initialSessionId", ignoreNulls = true).over(window))
-    //      .withColumn("nextEventTime", lead($"eventTime", 1).over(window))
-    //      .withColumn("sessionEndTime", max($"nextEventTime").over(windowBySession))
-    //      .withColumn("sessionStartTime", min($"eventTime").over(windowBySession))
-    //      .select($"category", $"product", $"userId", $"sessionId", (unix_timestamp($"sessionEndTime") - unix_timestamp($"sessionStartTime")).as("sessionDuration"))
-    //      .distinct()
-    //      .groupBy($"category", $"product").agg(sum($"sessionDuration").as("sessionDuration"))
-    //      .withColumn("rank", rank().over(Window.partitionBy($"category").orderBy($"sessionDuration")))
-    //      .filter($"rank".lt(10))
+    val task2a = task1a
+      .withColumn("sessionDuration", unix_timestamp($"sessionEndTime") - unix_timestamp($"sessionStartTime"))
+
+    /**
+      * Task #2
+      * average session duration
+      */
+
+
+    task2a
+      .select($"category", $"userId", $"sessionDuration")
+      .distinct()
+      .groupBy($"category").agg(avg($"sessionDuration"))
+
+
+    /**
+      * Task #2
+      * users
+      */
+
+    task2a
+      .select($"category", $"userId", $"sessionDuration")
+      .distinct()
+      .groupBy($"category", $"userId").agg(sum($"sessionDuration").as("sessionDuration"))
+      .withColumn("durationCategory", when($"sessionDuration" < 60, "<1").when($"sessionDuration".between(60, 300), "1 to 5").otherwise(">5"))
+      .groupBy($"category").pivot($"durationCategory").agg(count($"userId"))
+
+    /**
+      * Task #2
+      * top10
+      */
+
+    df
+      .withColumn("prevProduct", lag($"product", 1).over(window))
+      .withColumn("initialSessionId", when($"prevProduct".isNull || $"prevProduct" =!= $"product", monotonically_increasing_id()))
+      .withColumn("sessionId", last($"initialSessionId", ignoreNulls = true).over(window))
+      .withColumn("nextEventTime", lead($"eventTime", 1).over(window))
+      .withColumn("sessionEndTime", max($"nextEventTime").over(windowBySession))
+      .withColumn("sessionStartTime", min($"eventTime").over(windowBySession))
+      .select($"category", $"product", $"userId", $"sessionId", (unix_timestamp($"sessionEndTime") - unix_timestamp($"sessionStartTime")).as("sessionDuration"))
+      .distinct()
+      .groupBy($"category", $"product").agg(sum($"sessionDuration").as("sessionDuration"))
+      .withColumn("rank", rank().over(Window.partitionBy($"category").orderBy($"sessionDuration")))
+      .filter($"rank".lt(10))
 
   }
 
