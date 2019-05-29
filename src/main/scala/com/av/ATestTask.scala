@@ -8,9 +8,9 @@ import org.apache.spark.sql.functions._
 import org.apache.spark.sql.types.{StringType, StructField, StructType, TimestampType}
 import org.apache.spark.sql.{SparkSession, _}
 
-object AppleTestTask {
+object ATestTask {
   def main(args: Array[String]): Unit = {
-    AppleTest()
+    ATest()
   }
 }
 
@@ -50,7 +50,7 @@ object SourceBuilder {
   }
 }
 
-object AppleTest {
+object ATest {
 
   def apply(): Unit = {
     val spark = getConnection[SparkSession].instance()
