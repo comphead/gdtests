@@ -19,13 +19,16 @@ import org.json4s.native.JsonMethods._
 import org.slf4j.LoggerFactory
 
 object App {
+  org.apache.log4j.BasicConfigurator.configure()
+  org.apache.log4j.Logger.getRootLogger.setLevel(org.apache.log4j.Level.WARN)
   val topic = "bot.source"
 
   def main(args: Array[String]): Unit = {
+
+
     StreamManager.start()
   }
 }
-
 
 case class Data(`type`: String, ip: String, unix_time: Long, category_id: Long, id: Long) extends Serializable
 
@@ -128,9 +131,9 @@ trait StructuredStreamReader extends StreamReader {
       .selectExpr("CAST(value AS STRING)")
       .select(from_json($"value", struct).as("activity"))
       .selectExpr("activity.type", "activity.ip", "activity.unix_time", "activity.category_id", "CAST(activity.unix_time as timestamp) timestamp")
-      .withWatermark("timestamp", "10 minutes")
+      .withWatermark("timestamp", "1 minutes")
       .groupBy(
-        window($"timestamp", "10 minutes", "5 minutes"),
+        window($"timestamp", "1 minutes", "1 minutes"),
         $"ip")
       .agg(
         count($"ip").as("numCalls"),
@@ -143,19 +146,27 @@ trait StructuredStreamReader extends StreamReader {
           .when($"numCalls".gt(1000), "Enormous event rate")
           .when(($"totalClicks" / greatest($"totalViews", lit(1))).gt(3), "Suspiciuos view/clicks ratio")
       )
+      .select($"ip", $"problem", current_timestamp().cast(DataTypes.LongType).as("ts"), (regexp_replace($"ip", "\\.", "").cast(DataTypes.LongType) + current_timestamp().cast(DataTypes.LongType)).as("id"))
+      .filter($"problem".isNotNull)
 
 
-    val consoleOutput = df.writeStream
-      .outputMode("append")
-      .format("console")
-      .start()
-    consoleOutput.awaitTermination()
+    //    val consoleOutput = df.writeStream
+    //      .outputMode("append")
+    //      .format("console")
+    //      .start()
 
-    //    df.writeStream
-    //      .foreach(new CassandraSink(spark.sparkContext.getConf))
-    //      .start
+    import org.apache.spark.sql.cassandra._
 
-    //spark.streams.awaitAnyTermination()
+    df.writeStream
+      .foreachBatch { (batchDF, _) =>
+        batchDF
+          .write
+          .cassandraFormat("activity1", "exam")
+          .mode("append")
+          .save
+      }.start
+
+    spark.streams.awaitAnyTermination()
   }
 
   class CassandraSink(sparkConf: SparkConf) extends ForeachWriter[Row] {
