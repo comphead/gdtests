@@ -1,16 +1,12 @@
 package com.av
 
 import com.av.StreamManager.safeTo
-import com.datastax.driver.core.Statement
-import com.datastax.driver.core.querybuilder.QueryBuilder
 import com.datastax.spark.connector._
-import com.datastax.spark.connector.cql.CassandraConnector
 import com.datastax.spark.connector.streaming._
 import org.apache.kafka.clients.consumer.ConsumerConfig
 import org.apache.kafka.common.serialization.StringDeserializer
-import org.apache.spark.SparkConf
+import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.types.{DataTypes, StructType}
-import org.apache.spark.sql.{ForeachWriter, Row, SparkSession}
 import org.apache.spark.streaming._
 import org.apache.spark.streaming.kafka010.LocationStrategies.PreferConsistent
 import org.apache.spark.streaming.kafka010._
@@ -167,25 +163,6 @@ trait StructuredStreamReader extends StreamReader {
       }.start
 
     spark.streams.awaitAnyTermination()
-  }
-
-  class CassandraSink(sparkConf: SparkConf) extends ForeachWriter[Row] {
-    def open(partitionId: Long, version: Long): Boolean = true
-
-    def process(row: Row) = {
-      def buildStatement: Statement =
-        QueryBuilder.insertInto("exam", "activity1")
-          .value("ip", row.getAs[String]("ip"))
-          .value("problem", row.getAs[String]("problem"))
-          .value("ts", System.currentTimeMillis())
-          .value("id", System.nanoTime())
-
-      CassandraConnector(sparkConf).withSessionDo { session =>
-        session.execute(buildStatement)
-      }
-    }
-
-    def close(errorOrNull: Throwable) = logger.error("Cassandra error", errorOrNull)
   }
 
 }
