@@ -9,18 +9,22 @@ repositories {
 }
 
 
+ext {
+    sparkVersion = '2.4.3'
+    kafkaConnectorVersion = '2.4.1'
+}
 
 dependencies {
     compile 'org.scala-lang:scala-library:2.11.12'
     
-    compile (group: 'org.apache.spark', name: 'spark-core_2.11', version: '2.4.3')
-    compile (group: 'org.apache.spark', name: 'spark-streaming-kafka-0-10_2.11', version: '2.4.3')
+    compile (group: 'org.apache.spark', name: 'spark-core_2.11', version: sparkVersion)
+    compile (group: 'org.apache.spark', name: 'spark-streaming-kafka-0-10_2.11', version: sparkVersion)
     // https://mvnrepository.com/artifact/org.apache.spark/spark-streaming
-    compile group: 'org.apache.spark', name: 'spark-streaming_2.11', version: '2.4.3'
+    compile group: 'org.apache.spark', name: 'spark-streaming_2.11', version: sparkVersion
     // https://mvnrepository.com/artifact/org.apache.spark/spark-sql
-    compile group: 'org.apache.spark', name: 'spark-sql_2.11', version: '2.4.3'
+    compile group: 'org.apache.spark', name: 'spark-sql_2.11', version: sparkVersion
 // https://mvnrepository.com/artifact/com.datastax.spark/spark-cassandra-connector
-    compile group: 'com.datastax.spark', name: 'spark-cassandra-connector_2.11', version: '2.4.1'
+    compile group: 'com.datastax.spark', name: 'spark-cassandra-connector_2.11', version: kafkaConnectorVersion
     // https://mvnrepository.com/artifact/org.json4s/json4s-jackson
     compile group: 'org.json4s', name: 'json4s-jackson_2.11', version: '3.6.5'
 // https://mvnrepository.com/artifact/org.json4s/json4s-native
@@ -50,6 +54,7 @@ task fatJar(type: Jar) {
                 'Implementation-Version': version,
                 'Main-Class': 'com.av.App'
     }
+    zip64 true
     baseName = project.name + '-all'
     from { configurations.compile.collect { it.isDirectory() ? it : zipTree(it) } }
     with jar

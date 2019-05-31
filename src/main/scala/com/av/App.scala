@@ -1,25 +1,26 @@
 package com.av
 
-import java.util
-import java.util.Collections
-
 import com.av.StreamManager.safeTo
-import org.apache.spark.sql.SparkSession
-import org.apache.spark.streaming.{Minutes, Seconds, State, StateSpec, StreamingContext}
-import org.apache.spark.streaming.kafka010._
+import com.datastax.driver.core.Statement
+import com.datastax.driver.core.querybuilder.QueryBuilder
 import com.datastax.spark.connector._
+import com.datastax.spark.connector.cql.CassandraConnector
 import com.datastax.spark.connector.streaming._
-import org.apache.kafka.common.TopicPartition
+import org.apache.kafka.clients.consumer.ConsumerConfig
 import org.apache.kafka.common.serialization.StringDeserializer
+import org.apache.spark.SparkConf
+import org.apache.spark.sql.types.{DataTypes, StructType}
+import org.apache.spark.sql.{ForeachWriter, Row, SparkSession}
+import org.apache.spark.streaming.kafka010.LocationStrategies.PreferConsistent
+import org.apache.spark.streaming.kafka010._
+import org.apache.spark.streaming._
 import org.json4s._
 import org.json4s.native.JsonMethods._
-import org.apache.spark.streaming.kafka010.LocationStrategies.PreferConsistent
 import org.slf4j.LoggerFactory
 
-import scala.util.Try
-import collection.JavaConverters._
-
 object App {
+  val topic = "bot.source"
+
   def main(args: Array[String]): Unit = {
     StreamManager.start()
   }
@@ -39,7 +40,7 @@ case class AggregateData(totalViews: Int, totalClicks: Int, totalCategories: Int
 case class EvaluatedActivity(ip: String, problem: String, ts: Long, id: Long)
 
 
-trait StreamReader {
+trait StreamReader extends Logger {
   def readStream(spark: SparkSession, kafkaParams: Map[String, Object])
 }
 
@@ -49,7 +50,7 @@ trait DStreamReader extends StreamReader {
     val checkpointDir = "/tmp/checkpoint"
     ssc.checkpoint(checkpointDir)
 
-    val topics = List("bot.source")
+    val topics = List(App.topic)
     val kafkaStream = KafkaUtils.createDirectStream[String, String](
       ssc,
       PreferConsistent,
@@ -75,13 +76,13 @@ trait DStreamReader extends StreamReader {
             numCalls = newTxs.size
           )
 
-//          aggData.update(aggData.getOption().fold(newAgg)(a =>
-//            AggregateData(
-//              totalViews = a.totalViews + newAgg.totalViews,
-//              totalClicks = a.totalClicks + newAgg.totalClicks,
-//              totalCategories = a.totalCategories + newAgg.totalCategories,
-//              numCalls = a.numCalls + newAgg.numCalls
-//            )))
+          //          aggData.update(aggData.getOption().fold(newAgg)(a =>
+          //            AggregateData(
+          //              totalViews = a.totalViews + newAgg.totalViews,
+          //              totalClicks = a.totalClicks + newAgg.totalClicks,
+          //              totalCategories = a.totalCategories + newAgg.totalCategories,
+          //              numCalls = a.numCalls + newAgg.numCalls
+          //            )))
 
           val ts = System.currentTimeMillis()
 
@@ -97,9 +98,8 @@ trait DStreamReader extends StreamReader {
             id = System.nanoTime())
         })
       )
-      .print()
-    //.filter(_.problem.nonEmpty)
-    //.saveToCassandra("exam", "activity1", SomeColumns("ip", "problem", "ts", "id"))
+      .filter(_.problem.nonEmpty)
+      .saveToCassandra("exam", "activity1", SomeColumns("ip", "problem", "ts", "id"))
     //      .flatMap {
     //        case r: Right[_, _] => r.right.toOption
     //        case l: Left[_, _] =>
@@ -121,8 +121,74 @@ trait DStreamReader extends StreamReader {
   }
 }
 
+import org.apache.spark.sql.functions._
+
 trait StructuredStreamReader extends StreamReader {
-  override def readStream(spark: SparkSession, kafkaParams: Map[String, Object]) = ???
+  override def readStream(spark: SparkSession, kafkaParams: Map[String, Object]) = {
+    import spark.sqlContext.implicits._
+
+    val struct = new StructType()
+      .add("type", DataTypes.StringType)
+      .add("ip", DataTypes.StringType)
+      .add("unix_time", DataTypes.LongType)
+      .add("category_id", DataTypes.LongType)
+
+    val df = spark
+      .readStream
+      .format("kafka")
+      .option("kafka.bootstrap.servers", kafkaParams(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG).toString)
+      .option("subscribe", App.topic)
+      .load()
+      .withWatermark("timestamp", "10 minutes")
+      .select(from_json($"value", struct).as("activity"))
+      .selectExpr("activity.type", "activity.ip", "activity.unix_time", "activity.category_id")
+      .groupBy(
+        window($"timestamp", "10 minutes", "5 minutes"),
+        $"ip")
+      .agg(
+        count($"ip").as("numCalls"),
+        countDistinct($"category_id").as("totalCategories"),
+        sum(when($"type" === "click", 1).otherwise(0)).as("totalClicks"),
+        sum(when($"type" === "view", 1).otherwise(0)).as("totalViews")
+      )
+      .withColumn("problem",
+        when($"totalCategories".gt(5), "Frequent category switch")
+          .when($"numCalls".gt(1000), "Enormous event rate")
+          .when(($"totalClicks" / greatest($"totalViews", lit(1))).gt(3), "Suspiciuos view/clicks ratio")
+      )
+
+
+    val consoleOutput = df.writeStream
+      .outputMode("append")
+      .format("console")
+      .start()
+    consoleOutput.awaitTermination()
+
+    //    df.writeStream
+    //      .foreach(new CassandraSink(spark.sparkContext.getConf))
+    //      .start
+
+    //spark.streams.awaitAnyTermination()
+  }
+
+  class CassandraSink(sparkConf: SparkConf) extends ForeachWriter[Row] {
+    def open(partitionId: Long, version: Long): Boolean = true
+
+    def process(row: Row) = {
+      def buildStatement: Statement =
+        QueryBuilder.insertInto("exam", "activity1")
+          .value("ip", row.getAs[String]("ip"))
+          .value("problem", row.getAs[String]("problem"))
+          .value("ts", System.currentTimeMillis())
+          .value("id", System.nanoTime())
+
+      CassandraConnector(sparkConf).withSessionDo { session =>
+        session.execute(buildStatement)
+      }
+    }
+
+    def close(errorOrNull: Throwable) = logger.error("Cassandra error", errorOrNull)
+  }
 }
 
 trait StreamWriter[A] {
@@ -148,7 +214,7 @@ object StreamManager extends Logger {
       .getOrCreate()
 
     val kafkaParams = Map[String, Object](
-      "bootstrap.servers" -> "localhost:9092",
+      ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG -> "localhost:9092",
       "key.deserializer" -> classOf[StringDeserializer],
       "value.deserializer" -> classOf[StringDeserializer],
       "group.id" -> "bot.stream.group",
@@ -156,7 +222,8 @@ object StreamManager extends Logger {
       "enable.auto.commit" -> (false: java.lang.Boolean)
     )
 
-    new DStreamReader {}.readStream(spark, kafkaParams)
+    new StructuredStreamReader {}.readStream(spark, kafkaParams)
+    //new DStreamReader {}.readStream(spark, kafkaParams)
 
   }
 
