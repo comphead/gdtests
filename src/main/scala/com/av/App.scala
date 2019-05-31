@@ -11,9 +11,9 @@ import org.apache.kafka.common.serialization.StringDeserializer
 import org.apache.spark.SparkConf
 import org.apache.spark.sql.types.{DataTypes, StructType}
 import org.apache.spark.sql.{ForeachWriter, Row, SparkSession}
+import org.apache.spark.streaming._
 import org.apache.spark.streaming.kafka010.LocationStrategies.PreferConsistent
 import org.apache.spark.streaming.kafka010._
-import org.apache.spark.streaming._
 import org.json4s._
 import org.json4s.native.JsonMethods._
 import org.slf4j.LoggerFactory
@@ -100,20 +100,6 @@ trait DStreamReader extends StreamReader {
       )
       .filter(_.problem.nonEmpty)
       .saveToCassandra("exam", "activity1", SomeColumns("ip", "problem", "ts", "id"))
-    //      .flatMap {
-    //        case r: Right[_, _] => r.right.toOption
-    //        case l: Left[_, _] =>
-    //          val left = l.left.get
-    //          logger.error(s"Error processing [${left.originalMessage}] -> [${left.exception}]")
-    //          None
-    //        case _ => None
-    //      }
-    //      .saveToCassandra("exam", "activity", SomeColumns("type_", "ip", "unix_time", "category_id", "id"))
-
-
-    //val stream2 = kafkaStream
-    //.map(keyVal => safeTo[Data](keyVal.value()))
-    //.flatMap(_.right.toOption)
 
 
     ssc.start
@@ -139,15 +125,16 @@ trait StructuredStreamReader extends StreamReader {
       .option("kafka.bootstrap.servers", kafkaParams(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG).toString)
       .option("subscribe", App.topic)
       .load()
-      .withWatermark("timestamp", "10 minutes")
+      .selectExpr("CAST(value AS STRING)")
       .select(from_json($"value", struct).as("activity"))
-      .selectExpr("activity.type", "activity.ip", "activity.unix_time", "activity.category_id")
+      .selectExpr("activity.type", "activity.ip", "activity.unix_time", "activity.category_id", "CAST(activity.unix_time as timestamp) timestamp")
+      .withWatermark("timestamp", "10 minutes")
       .groupBy(
         window($"timestamp", "10 minutes", "5 minutes"),
         $"ip")
       .agg(
         count($"ip").as("numCalls"),
-        countDistinct($"category_id").as("totalCategories"),
+        approx_count_distinct($"category_id").as("totalCategories"),
         sum(when($"type" === "click", 1).otherwise(0)).as("totalClicks"),
         sum(when($"type" === "view", 1).otherwise(0)).as("totalViews")
       )
@@ -189,6 +176,7 @@ trait StructuredStreamReader extends StreamReader {
 
     def close(errorOrNull: Throwable) = logger.error("Cassandra error", errorOrNull)
   }
+
 }
 
 trait StreamWriter[A] {
