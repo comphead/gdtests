@@ -1,13 +1,29 @@
-import cats._
-import cats.implicits._
-import cats.syntax.semigroup._
-import cats.Monoid
-import cats.instances.string._ // for Monoid
-
-case class X(a: Int, b: Int, c: Int)
-
-trait CustomClassSemigroupImpl extends Semigroup[X] {
-  def combine(first: X, second: X): X = X(first.a )
+trait AbstractOperation {
+  def run()
 }
 
-Semigroup[X].combine(X(1,2,3), X(2,3,4))
+class SaveToDatabaseOperation extends AbstractOperation {
+  override def run(): Unit = println("Save to db")
+}
+
+trait AuditDecorator extends AbstractOperation {
+  abstract override def run(): Unit = {
+    println("Entering Audit")
+    super.run()
+    println("Exiting Audit")
+  }
+}
+
+trait CachingDecorator extends AbstractOperation {
+  abstract override def run(): Unit = {
+    println("Entering Cache")
+    super.run()
+    println("Exiting Cache")
+  }
+}
+
+val operation = new SaveToDatabaseOperation with AuditDecorator with CachingDecorator
+operation.run()
+
+
+

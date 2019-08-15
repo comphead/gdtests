@@ -20,7 +20,7 @@ object App {
   val topic = "bot.source"
 
   def main(args: Array[String]): Unit = {
-
+    implicit val reader = new TestStreamReader {}
 
     StreamManager.start()
   }
@@ -41,6 +41,32 @@ case class EvaluatedActivity(ip: String, problem: String, ts: Long, id: Long)
 
 trait StreamReader extends Logger {
   def readStream(spark: SparkSession, kafkaParams: Map[String, Object])
+}
+
+trait TestStreamReader extends StreamReader {
+  override def readStream(spark: SparkSession, kafkaParams: Map[String, Object]): Unit = {
+    val ssc = new StreamingContext(spark.sparkContext, Seconds(5))
+    val checkpointDir = "/tmp/checkpoint"
+    ssc.checkpoint(checkpointDir)
+
+    val topics = List("testTopic")
+    val kafkaStream = KafkaUtils.createDirectStream[String, String](
+      ssc,
+      PreferConsistent,
+      ConsumerStrategies.Subscribe[String, String](topics, kafkaParams)
+    )
+
+    val str = kafkaStream
+      .map(record => safeTo[RawData](record.value()))
+      .flatMap(_.right.toOption)
+
+    str.foreachRDD(rdd => println(rdd.collect().length))
+
+    str.foreachRDD(rdd => println(rdd.collect().length))
+
+    ssc.start
+    ssc.awaitTermination
+  }
 }
 
 trait DStreamReader extends StreamReader {
@@ -146,6 +172,7 @@ trait StructuredStreamReader extends StreamReader {
       .filter($"problem".isNotNull)
 
 
+
     //    val consoleOutput = df.writeStream
     //      .outputMode("append")
     //      .format("console")
@@ -181,7 +208,7 @@ trait Logger {
 }
 
 object StreamManager extends Logger {
-  def start(): Unit = {
+  def start()(implicit reader: StreamReader): Unit = {
     val spark = SparkSession.builder
       .master("local[3]")
       .appName("BotStreaming")
@@ -198,8 +225,7 @@ object StreamManager extends Logger {
       "enable.auto.commit" -> (false: java.lang.Boolean)
     )
 
-    new StructuredStreamReader {}.readStream(spark, kafkaParams)
-    //new DStreamReader {}.readStream(spark, kafkaParams)
+    reader.readStream(spark, kafkaParams)
 
   }
 

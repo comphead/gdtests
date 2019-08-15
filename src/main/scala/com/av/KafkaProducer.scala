@@ -1,7 +1,7 @@
 package com.av
 
-import org.apache.kafka.clients.producer.{Callback, KafkaProducer, ProducerConfig, ProducerRecord, RecordMetadata}
-import org.apache.kafka.common.serialization.{StringDeserializer, StringSerializer}
+import org.apache.kafka.clients.producer._
+import org.apache.kafka.common.serialization.StringSerializer
 
 object KafkaProducer1 {
   def main(args: Array[String]): Unit = {
@@ -85,7 +85,7 @@ trait KafkaProd extends Producer[String] {
     ProducerConfig.ENABLE_IDEMPOTENCE_CONFIG -> "true",
     ProducerConfig.ACKS_CONFIG -> "all"
   )
-  private val topic = "bot.source"
+  private val topic = "testTopic"
   lazy val client = new KafkaProducer[String, String](kafkaParams.asJava)
 
   override def send(msgs: Seq[String]): Unit = msgs.foreach(m => client.send(
